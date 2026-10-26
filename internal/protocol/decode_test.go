@@ -59,3 +59,15 @@ func TestHelloSummary(t *testing.T) {
 		t.Fatal(string(b))
 	}
 }
+func TestUnderflow(t *testing.T) {
+	for _, tc := range []struct{ token, code string }{{"1e-999", "INVALID_DATA"}, {"-1e-999", "INVALID_DATA"}, {"0e-999", ""}, {"5e-324", ""}} {
+		_, e := DecodeRequest(context.Background(), []byte(strings.Replace(valid, "[[1],[-2]]", "[["+tc.token+"],[-2]]", 1)), DefaultLimits())
+		got := ""
+		if e != nil {
+			got = e.Detail.Code
+		}
+		if got != tc.code {
+			t.Fatalf("%s got %s want %s", tc.token, got, tc.code)
+		}
+	}
+}

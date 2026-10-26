@@ -44,7 +44,8 @@ func rankFilter(ctx context.Context, x []float64, p map[string]any) ([]float64, 
 	rank := w / 2
 	quant := p["_method"] == "quantile"
 	if quant {
-		rank = min(w-1, int(float64(w)*p["quantile"].(float64)))
+		percentile := float64(p["quantile"].(float64) * 100)
+		rank = min(w-1, int(float64(float64(w)*percentile)/100))
 	}
 	y := make([]float64, len(x))
 	buf := make([]float64, w)

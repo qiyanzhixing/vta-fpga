@@ -106,8 +106,8 @@ func number(v any) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	f, e := n.Float64()
-	return f, e == nil && !math.IsNaN(f) && !math.IsInf(f, 0)
+	f, e := FiniteNumber(n)
+	return f, e == nil
 }
 func DecodeRequest(ctx context.Context, raw []byte, l Limits) (r Request, err *Error) {
 	fail := func(code, field, msg string) (Request, *Error) { return r, Failure(r.RequestID, code, field, msg) }
@@ -215,4 +215,24 @@ func DecodeRequest(ctx context.Context, raw []byte, l Limits) (r Request, err *E
 	}
 	r.Config.Params, _ = json.Marshal(p)
 	return r, nil
+}
+
+// FiniteNumber rejects overflow and nonzero decimals that round down to zero.
+// A lexical zero remains valid even with a very large exponent.
+func FiniteNumber(n json.Number) (float64, error) {
+	f, err := n.Float64()
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("number is outside float64 range")
+	}
+	if f == 0 {
+		for _, ch := range string(n) {
+			if ch == 'e' || ch == 'E' {
+				break
+			}
+			if ch >= '1' && ch <= '9' {
+				return 0, fmt.Errorf("nonzero number underflows float64")
+			}
+		}
+	}
+	return f, nil
 }

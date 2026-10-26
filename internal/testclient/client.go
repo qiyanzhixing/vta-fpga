@@ -139,7 +139,7 @@ func (c *Client) Connect(ctx context.Context, u string) error {
 	}
 }
 func (c *Client) manage(ctx context.Context, u string, ready chan error) {
-	defer func() { c.mu.Lock(); c.running = false; c.state = "DISCONNECTED"; c.mu.Unlock(); close(c.done) }()
+	defer func() { c.mu.Lock(); c.running = false; c.state = "DISCONNECTED"; close(c.done); c.mu.Unlock() }()
 	notified := false
 	notify := func(e error) {
 		if !notified {
@@ -182,8 +182,17 @@ func (c *Client) manage(ctx context.Context, u string, ready chan error) {
 		} else {
 			ws.SetReadLimit(protocol.DefaultLimits().MaxResponseBytes)
 			c.mu.Lock()
+			c.conn = ws
 			c.state = "WAIT_HELLO"
 			c.mu.Unlock()
+			socketDone := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					ws.Close()
+				case <-socketDone:
+				}
+			}()
 			ws.SetReadDeadline(time.Now().Add(c.cfg.HelloTimeout))
 			typ, b, readErr := ws.ReadMessage()
 			h, helloErr := validateHello(b)
@@ -198,18 +207,27 @@ func (c *Client) manage(ctx context.Context, u string, ready chan error) {
 				ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1000, "INCOMPATIBLE_HELLO"), time.Now().Add(c.cfg.CloseTimeout))
 			} else {
 				c.mu.Lock()
-				c.conn = ws
-				c.hello = h
-				c.state = "READY"
-				c.mu.Unlock()
-				notify(nil)
-				connected := c.cfg.Now()
-				code, e = c.readConnection(ctx, ws, generation)
-				if c.cfg.Now().Sub(connected) >= 30*time.Second {
-					k = 0
+				stopped := !c.policy.Desired || ctx.Err() != nil
+				if !stopped {
+					c.hello = h
+					c.state = "READY"
 				}
-				retry = RetryClose(code)
+				c.mu.Unlock()
+				if stopped {
+					e = context.Canceled
+					code = 1000
+					retry = false
+				} else {
+					notify(nil)
+					connected := c.cfg.Now()
+					code, e = c.readConnection(ctx, ws, generation)
+					if c.cfg.Now().Sub(connected) >= 30*time.Second {
+						k = 0
+					}
+					retry = RetryClose(code)
+				}
 			}
+			close(socketDone)
 			ws.Close()
 			c.mu.Lock()
 			if c.policy.Generation == generation {
@@ -424,24 +442,35 @@ func (c *Client) Close(ctx context.Context) error {
 	ws, done, cancel := c.conn, c.done, c.cancel
 	c.mu.Unlock()
 	if cancel != nil {
-		cancel()
-	}
-	if ws != nil {
-		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1000, "CLIENT_CLOSE"), time.Now().Add(c.cfg.CloseTimeout))
+		defer cancel()
 	}
 	if done == nil {
 		return nil
 	}
-	timer := time.NewTimer(c.cfg.CloseTimeout)
+	deadline := time.Now().Add(c.cfg.CloseTimeout)
+	if ws != nil {
+		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1000, "CLIENT_CLOSE"), deadline)
+	} else if cancel != nil {
+		cancel()
+	}
+	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	select {
 	case <-done:
 		return nil
 	case <-timer.C:
+		if cancel != nil {
+			cancel()
+		}
 		if ws != nil {
 			ws.Close()
 		}
-		return nil
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		if ws != nil {
 			ws.Close()

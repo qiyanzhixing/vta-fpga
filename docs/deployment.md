@@ -43,7 +43,7 @@ file bin/vta-service-linux-amd64 bin/vta-service-linux-arm64
 
 SIGINT/SIGTERM 停止接入、向已有连接发送 1001 并取消任务，在关闭预算内退出。算法取消后的槽位只有在实际计算和编码退出后才释放；心跳 `recovering` 表示仍在清理。
 
-Linux 设备信息来自 `/proc/stat`、`/proc/meminfo`、`/proc/uptime`、`/proc/cpuinfo`、`/etc/os-release`、内核版本及 device-tree/DMI。无权限、字段缺失或非 Linux 时返回 null 和对应 `collection_errors`；不将 MemFree 当作 MemAvailable。CPU 使用率为全部在线 CPU 的窗口平均值，首个窗口为 null。
+Linux 设备信息来自 `/proc/stat`、`/proc/meminfo`、`/proc/uptime`、`/proc/cpuinfo`、`/etc/os-release`、内核版本及 device-tree/DMI。无权限、字段缺失或非 Linux 时返回 null 和对应 `collection_errors`；不将 MemFree 当作 MemAvailable。CPU 使用率为全部在线 CPU 的窗口平均值，首个窗口为 null。单次系统文件读取最多等待 100ms；底层读取未退出时不叠加新读取任务，后续快照以 null/READ_FAILED 报告。
 
 ## PC 接入责任
 

@@ -1,11 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/gorilla/websocket"
+	"net"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"vta-fpga/internal/denoise"
@@ -333,5 +337,67 @@ func TestCancellationCompletionRace(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		s.Close(ctx)
 		cancel()
+	}
+}
+
+type pausedListener struct {
+	net.Listener
+	match            []byte
+	visible, release chan struct{}
+	once             atomic.Bool
+}
+type pausedConn struct {
+	net.Conn
+	p *pausedListener
+}
+
+func (l *pausedListener) Accept() (net.Conn, error) {
+	c, e := l.Listener.Accept()
+	if e != nil {
+		return nil, e
+	}
+	return &pausedConn{c, l}, nil
+}
+func (c *pausedConn) Write(b []byte) (int, error) {
+	n, e := c.Conn.Write(b)
+	if bytes.Contains(b, c.p.match) && c.p.once.CompareAndSwap(false, true) {
+		close(c.p.visible)
+		<-c.p.release
+	}
+	return n, e
+}
+func TestWritePublication(t *testing.T) {
+	for _, phase := range []string{"hello", "result"} {
+		t.Run(phase, func(t *testing.T) {
+			reg := denoise.NewRegistry()
+			cfg := DefaultConfig()
+			cfg.CloseTimeout = 50 * time.Millisecond
+			s := New(cfg, reg, engine.New(reg), engine.NewGate(1), telemetry.New(telemetry.Config{}, nil))
+			ts := httptest.NewUnstartedServer(s.Handler())
+			pl := &pausedListener{Listener: ts.Listener, match: []byte(`"type":"` + phase + `"`), visible: make(chan struct{}), release: make(chan struct{})}
+			ts.Listener = pl
+			ts.Start()
+			var once sync.Once
+			release := func() { once.Do(func() { close(pl.release) }) }
+			defer release()
+			t.Cleanup(func() {
+				release()
+				ctx, c := context.WithTimeout(context.Background(), time.Second)
+				defer c()
+				s.Close(ctx)
+				ts.Close()
+			})
+			ws := dial(t, "ws"+strings.TrimPrefix(ts.URL, "http")+"/vta")
+			receive(t, ws, "hello")
+			if phase == "result" {
+				ws.WriteMessage(websocket.TextMessage, []byte(request))
+				receive(t, ws, "result")
+			}
+			<-pl.visible
+			ws.WriteMessage(websocket.TextMessage, []byte(request))
+			time.Sleep(30 * time.Millisecond)
+			release()
+			receive(t, ws, "result")
+		})
 	}
 }

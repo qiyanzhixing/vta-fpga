@@ -2,9 +2,7 @@ package telemetry
 
 import (
 	"context"
-	"errors"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,14 +73,10 @@ func TestPermission(t *testing.T) {
 	if !hasError(h, "memory.total_bytes", "PERMISSION_DENIED") {
 		t.Fatal(h.CollectionErrors)
 	}
-	if !errors.Is(os.ErrPermission, os.ErrPermission) {
-		t.Fatal("unreachable")
-	}
 	b := s.Summary()
 	if b.Memory.TotalBytes != nil {
 		t.Fatal(b)
 	}
-	_ = strings.Builder{}
 }
 func TestConcurrentSnapshots(t *testing.T) {
 	s := New(Config{Interval: time.Millisecond, DeviceID: "original"}, nil)
@@ -110,5 +104,20 @@ func TestConcurrentSnapshots(t *testing.T) {
 	}
 	if *s.Summary().Device.ID != "original" {
 		t.Fatal("snapshot mutated cache")
+	}
+}
+func TestBoundedSourceRead(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	done := make(chan *Sampler, 1)
+	go func() { done <- New(Config{}, func(string) ([]byte, error) { <-release; return nil, os.ErrNotExist }) }()
+	select {
+	case s := <-done:
+		h := s.Snapshot(protocol.ServiceStatus{})
+		if !hasError(h, "memory.total_bytes", "READ_FAILED") {
+			t.Fatal(h.CollectionErrors)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("blocked source prevented sampler initialization")
 	}
 }

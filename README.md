@@ -59,4 +59,4 @@ python3 -m venv .venv
 make reference
 ```
 
-参考集记录脚本 SHA-256、Python 与依赖版本、随机种子对应的输入和 72 组期望结果。所有算法对照误差上限为 `1e-24 + 1e-7 * max(abs(expected), input_channel_scale)`；none、置零掩码和状态码要求一致。保留脚本的数值语义：例如全零信号的 soft 小波可能产生非有限值，此时返回原列并报告 `NON_FINITE_RESULT`。
+参考集记录脚本 SHA-256、Python 与依赖版本、随机种子对应的输入和 73 组期望结果。所有算法对照误差上限为 `1e-24 + 1e-7 * max(abs(expected), input_channel_scale)`；none、置零掩码和状态码要求一致。保留脚本的数值语义：例如全零信号的 soft 小波可能产生非有限值，此时返回原列并报告 `NON_FINITE_RESULT`。

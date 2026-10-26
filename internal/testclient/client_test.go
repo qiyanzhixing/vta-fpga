@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/websocket"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -141,5 +142,95 @@ func TestFreshness(t *testing.T) {
 	now = now.Add(time.Second)
 	if _, _, fresh := c.Status(); fresh {
 		t.Fatal("stale heartbeat appeared current")
+	}
+}
+func TestCloseDuringHello(t *testing.T) {
+	accepted, release := make(chan struct{}), make(chan struct{})
+	up := websocket.Upgrader{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, e := up.Upgrade(w, r, nil)
+		if e != nil {
+			return
+		}
+		defer ws.Close()
+		close(accepted)
+		<-release
+		ws.WriteJSON(protocol.Hello{Version: 1, Type: "hello", Functions: map[string][]string{"denoise": {"none"}}})
+	}))
+	defer ts.Close()
+	defer close(release)
+	c := New(Config{HelloTimeout: time.Second, CloseTimeout: 20 * time.Millisecond})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connected := make(chan error, 1)
+	go func() { connected <- c.Connect(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")) }()
+	<-accepted
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		state, _, _ := c.Status()
+		if state == "WAIT_HELLO" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.Close(context.Background())
+	select {
+	case e := <-connected:
+		if e == nil {
+			t.Fatal("READY after Close")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("hello reader remained blocked after Close")
+	}
+	select {
+	case <-c.done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("manager did not stop")
+	}
+}
+func TestContextCancelsSocket(t *testing.T) {
+	for _, pendingRequest := range []bool{false, true} {
+		t.Run(strconv.FormatBool(pendingRequest), func(t *testing.T) {
+			up := websocket.Upgrader{}
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ws, e := up.Upgrade(w, r, nil)
+				if e != nil {
+					return
+				}
+				defer ws.Close()
+				ws.WriteJSON(protocol.Hello{Version: 1, Type: "hello", Functions: map[string][]string{"denoise": {"none"}}})
+				for {
+					if _, _, e := ws.ReadMessage(); e != nil {
+						return
+					}
+				}
+			}))
+			defer ts.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c := New(Config{PongTimeout: time.Second, CloseTimeout: 20 * time.Millisecond})
+			if e := c.Connect(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")); e != nil {
+				t.Fatal(e)
+			}
+			if pendingRequest {
+				go c.Denoise(context.Background(), protocol.Request{Version: 1, Type: "denoise", RequestID: "cancel"})
+				deadline := time.Now().Add(time.Second)
+				for time.Now().Before(deadline) {
+					c.mu.Lock()
+					p := c.pending != nil
+					c.mu.Unlock()
+					if p {
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			cancel()
+			select {
+			case <-c.done:
+			case <-time.After(100 * time.Millisecond):
+				t.Fatal("context cancellation did not close socket")
+			}
+		})
 	}
 }

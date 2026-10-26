@@ -24,6 +24,7 @@ type Clock interface {
 type Config struct {
 	DeviceID, DeviceModel string
 	Interval              time.Duration
+	SourceTimeout         time.Duration
 	Clock                 Clock
 }
 type realClock struct{ start time.Time }
@@ -90,7 +91,10 @@ func New(cfg Config, readFile func(string) ([]byte, error)) *Sampler {
 			readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 		}
 	}
-	s := &Sampler{cfg: cfg, read: readFile, clock: clock}
+	if cfg.SourceTimeout <= 0 {
+		cfg.SourceTimeout = 100 * time.Millisecond
+	}
+	s := &Sampler{cfg: cfg, read: boundedSource(readFile, cfg.SourceTimeout), clock: clock}
 	s.loadStatic()
 	s.collect()
 	return s
@@ -345,4 +349,32 @@ func (s *Sampler) Snapshot(service protocol.ServiceStatus) protocol.Heartbeat {
 func (s *Sampler) Summary() protocol.DeviceSummary {
 	h := s.Snapshot(protocol.ServiceStatus{})
 	return protocol.DeviceSummary{Device: h.Device, CPU: h.CPU.CPUSummary, Memory: h.Memory.MemorySummary}
+}
+
+// At most one source read can be stuck. Timeouts do not start replacement
+// reads until that worker actually exits, so a bad kernel source cannot cause
+// an accumulating goroutine queue or stop null/error heartbeats.
+func boundedSource(read func(string) ([]byte, error), timeout time.Duration) func(string) ([]byte, error) {
+	busy := make(chan struct{}, 1)
+	type result struct {
+		body []byte
+		err  error
+	}
+	return func(path string) ([]byte, error) {
+		select {
+		case busy <- struct{}{}:
+		default:
+			return nil, errors.New("previous system read still running")
+		}
+		done := make(chan result, 1)
+		go func() { b, e := read(path); <-busy; done <- result{b, e} }()
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case r := <-done:
+			return r.body, r.err
+		case <-timer.C:
+			return nil, errors.New("system read timed out")
+		}
+	}
 }

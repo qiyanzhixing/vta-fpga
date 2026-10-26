@@ -66,7 +66,7 @@ func (r *Registry) Parse(req protocol.Request, maxWindow int) (Config, *protocol
 			if !ok {
 				return fail("INVALID_CONFIG", "."+k, "number required")
 			}
-			f, e := n.Float64()
+			f, e := protocol.FiniteNumber(n)
 			if e != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 				return fail("INVALID_CONFIG", "."+k, "finite number required")
 			}

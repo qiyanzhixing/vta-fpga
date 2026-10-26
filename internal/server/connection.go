@@ -51,6 +51,7 @@ type connection struct {
 	started        time.Time
 	lastPong       atomic.Int64
 	mu             sync.Mutex
+	publication    sync.RWMutex
 	pending        *job
 	out            chan terminal
 	uploadDeadline time.Time
@@ -77,9 +78,9 @@ func (c *connection) close(code int, reason string) {
 		if j != nil {
 			j.cancelWork()
 		}
-		_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(c.s.cfg.CloseTimeout))
+		deadline := time.Now().Add(c.s.cfg.CloseTimeout)
 		go func() {
-			timer := time.NewTimer(c.s.cfg.CloseTimeout)
+			timer := time.NewTimer(time.Until(deadline))
 			defer timer.Stop()
 			select {
 			case <-c.done:
@@ -87,6 +88,7 @@ func (c *connection) close(code int, reason string) {
 			}
 			c.ws.Close()
 		}()
+		_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), deadline)
 	})
 }
 func (c *connection) readDeadline() {
@@ -143,13 +145,21 @@ func (c *connection) serve() {
 			<-c.ctx.Done()
 			return
 		}
-		if !c.ready.Load() {
-			c.close(1008, "HELLO_REQUIRED")
-			return
-		}
+		// The peer may already have received the final bytes while WriteMessage
+		// has not returned. Observe publication together with write completion.
+		c.publication.RLock()
+		ready := c.ready.Load()
 		c.mu.Lock()
 		busy := c.pending != nil
 		c.mu.Unlock()
+		c.publication.RUnlock()
+		if c.ctx.Err() != nil {
+			return
+		}
+		if !ready {
+			c.close(1008, "HELLO_REQUIRED")
+			return
+		}
 		if busy {
 			c.close(1008, "ONE_REQUEST_AT_A_TIME")
 			return

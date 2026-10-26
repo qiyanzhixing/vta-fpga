@@ -21,10 +21,9 @@ func (c *connection) write(body []byte) bool {
 func (c *connection) writeLoop() {
 	hello := protocol.Hello{Version: 1, Type: "hello", DeviceSummary: c.s.metrics.Summary(), Functions: map[string][]string{"denoise": c.s.reg.Methods()}}
 	body, e := json.Marshal(hello)
-	if e != nil || !c.write(body) {
+	if e != nil || !c.publish(body, func() { c.ready.Store(true) }) {
 		return
 	}
-	c.ready.Store(true)
 	seq := uint64(0)
 	heartbeat := func() bool {
 		h := c.s.metrics.Snapshot(c.s.gate.Snapshot())
@@ -51,14 +50,16 @@ func (c *connection) writeLoop() {
 		case <-c.ctx.Done():
 			return
 		case t := <-c.out:
-			if !c.write(t.body) {
+			if !c.publish(t.body, func() {
+				c.mu.Lock()
+				if c.pending == t.job {
+					c.pending = nil
+				}
+				c.mu.Unlock()
+			}) {
 				return
 			}
-			c.mu.Lock()
-			if c.pending == t.job {
-				c.pending = nil
-			}
-			c.mu.Unlock() // Any delayed heartbeat uses a fresh snapshot after this complete message.
+			// Any delayed heartbeat uses a fresh snapshot after this complete message.
 			select {
 			case <-ticker.C:
 				if !heartbeat() {
@@ -91,4 +92,16 @@ func (c *connection) pingLoop() {
 			}
 		}
 	}
+}
+
+// Publication never holds the cancellation mutex. Read control handlers do not
+// use this barrier; only a newly arrived application request observes it.
+func (c *connection) publish(body []byte, after func()) bool {
+	c.publication.Lock()
+	defer c.publication.Unlock()
+	if !c.write(body) {
+		return false
+	}
+	after()
+	return true
 }

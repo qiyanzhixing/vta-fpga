@@ -48,6 +48,9 @@ def generate(source):
   add(f'{method}_zero',np.zeros(8),method,{})
  for method in ['mean','median','quantile']:add(f'{method}_even',rng.normal(size=64),method,{'window_size':4})
  for mode in ['soft','hard']:add(f'wavelet_{mode}',rng.normal(size=65)*1e-12,'wavelet',{'threshold_type':mode,'level':2})
+ rank_input=np.arange(181,dtype=float)*1e-12
+ rank_input[90],rank_input[107]=rank_input[107],rank_input[90]
+ add('quantile_rank_rounding',rank_input,'quantile',{'window_size':90,'quantile':.7})
  x=(2+rng.normal(size=65))*1e-12
  for name,y in [('success',1.2*x+1e-13),('scale',5*x),('constant',np.ones(65)*1e-12),('shift',1.1*ref._shift_signal(x,2))]:
   add('baseline_'+name,np.column_stack([x,y]),'mz5_11',{'no_gas_mz':['mz5'],'T_idx':[0,60],'k':5,'max_lag':4})

@@ -4,9 +4,9 @@
 
 - `go test -race ./...`：全部包通过。
 - `go vet ./...`：通过。
-- Python 72 组离线参考与 Go 逐点对照：通过，未放宽误差。
+- Python 73 组离线参考与 Go 逐点对照：通过，未放宽误差。
 - 1911×63 CSV 经真实 WebSocket none 请求原值往返：通过。
-- 72 组参考输入经真实 WebSocket 返回并核对结果/状态：通过。
+- 73 组参考输入经真实 WebSocket 返回并核对结果/状态：通过。
 - `make build build-native`：Linux amd64、Linux arm64 和 macOS arm64 通过。两个 Linux 产物经 file 确认为静态 ELF。
 
 ## 主机数值执行基准
@@ -43,3 +43,19 @@ ok  	vta-fpga/internal/integration	14.982s
 ## 尚需实际设备验证
 
 没有部署到板端；需验证 Linux 真实指标、实际峰值 RSS、每算法延迟及网络异常恢复。暂未在 Linux x64/AArch64 主机上执行交叉构建产物。
+
+## 最终独立审阅与修复
+
+一次独立整体审阅提出 4 个重要问题，均先复现失败再修复：
+
+- `TestWritePublication/hello` 和 `/result`：模拟数据已送达但写调用尚未返回，修复 hello/终态发送与接收状态发布竞态。
+- `TestReference/quantile_rank_rounding`：增加第 73 组 Python 对照，window=90、quantile=0.7 的置零掩码与 SciPy 一致。
+- `TestCloseDuringHello`、`TestContextCancelsSocket`：等待 hello、空闲及处理中的连接取消及时关闭，停止后不会发布 READY。
+- `TestUnderflow`、`TestParameterUnderflow`：拒绝非零数值下溢成零，接受真正零和可表示的 subnormal。
+- 另根据采集预算要求增加 `TestBoundedSourceRead`：单次系统源读取最多等待 100ms；若底层读取未退出，后续采样报告 READ_FAILED，最多保留一个读取任务。
+
+发送完成与接收状态通过一个同步屏障发布；在终态写入的最后窗口到来的下一请求等待写入结束再判断，避免误关合规客户端。该窗口不执行第二个算法任务。写超时继续生效，其他连接独立发送。
+
+审阅中暂缓判断的事项：板端性能、RSS、Linux 实际采集和交叉产物运行仍待设备验收；生产 PC UI、TLS/认证按约定不实现。联调客户端对超过约 292 年的畸形 sample_age_ms 的时长溢出加固暂缓，当前服务器正常无法生成该年龄；代价是异常服务端可能使这一测试客户端的新鲜度显示不准确。
+
+本机二进制已直接启动，验证 hello、heartbeat、mean 请求、Close 握手与 SIGTERM 退出。

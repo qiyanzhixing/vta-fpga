@@ -134,3 +134,18 @@ func TestCancellation(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+func TestParameterUnderflow(t *testing.T) {
+	r := NewRegistry()
+	for _, token := range []string{"1e-999", "-1e-999"} {
+		_, e := r.Parse(protocol.Request{Config: protocol.Config{Method: "kalman", Params: json.RawMessage(`{"process_variance":` + token + `}`)}}, 4095)
+		if e == nil || e.Detail.Code != "INVALID_CONFIG" {
+			t.Fatal("underflow accepted", token, e)
+		}
+	}
+	for _, token := range []string{"0e-999", "5e-324"} {
+		_, e := r.Parse(protocol.Request{Config: protocol.Config{Method: "kalman", Params: json.RawMessage(`{"process_variance":` + token + `}`)}}, 4095)
+		if e != nil {
+			t.Fatal(token, e)
+		}
+	}
+}
