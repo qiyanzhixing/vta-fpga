@@ -91,7 +91,7 @@ func TestParams(t *testing.T) {
 			t.Fatal(s)
 		}
 	}
-	for _, c := range []protocol.Config{{"ewma", json.RawMessage(`{"alpha":0}`)}, {"kalman", json.RawMessage(`{"measurement_variance":0}`)}} {
+	for _, c := range []protocol.Config{{Method: "ewma", Params: json.RawMessage(`{"alpha":0}`)}, {Method: "kalman", Params: json.RawMessage(`{"measurement_variance":0}`)}} {
 		if _, e := r.Parse(protocol.Request{Config: c}, 4095); e == nil {
 			t.Fatal(c)
 		}

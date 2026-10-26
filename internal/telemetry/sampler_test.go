@@ -1,9 +1,11 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"vta-fpga/internal/protocol"
@@ -81,4 +83,32 @@ func TestPermission(t *testing.T) {
 		t.Fatal(b)
 	}
 	_ = strings.Builder{}
+}
+func TestConcurrentSnapshots(t *testing.T) {
+	s := New(Config{Interval: time.Millisecond, DeviceID: "original"}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				h := s.Snapshot(protocol.ServiceStatus{})
+				*h.Device.ID = "changed"
+				s.Summary()
+			}
+		}()
+	}
+	wg.Wait()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sampler did not stop")
+	}
+	if *s.Summary().Device.ID != "original" {
+		t.Fatal("snapshot mutated cache")
+	}
 }
