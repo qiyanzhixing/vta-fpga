@@ -39,9 +39,19 @@ make build
 
 支持 `none`、`mean`、`std_threshold`、`ewma`、`median`、`quantile`、`savitzky_golay`、`wavelet`（db4）、`kalman`、`mz5_11`。算法由 `docs/deNoise_ms.py` 移植，数值使用 float64。`mz5_11` 必须显式指定参考通道；参考通道保持原值，其余通道使用同一配置。未实现的功能类别不会出现在 hello 中。
 
-完整字段、默认参数、错误码和生命周期见 [通信协议](docs/superpowers/specs/2026-10-26-websocket-denoise-protocol-design.md)。运行预算、PC 重连与板端验收见 [部署说明](docs/deployment.md)。
+完整字段、默认参数、错误码和生命周期见 [网络通信协议](docs/network-protocol.md)。运行预算、PC 重连与板端验收见 [部署说明](docs/deployment.md)。
 
 ## 验证
+
+Python 联调客户端位于 [example/](example/README.md)，由 uv 管理：
+
+```sh
+cd example
+uv run --locked python client.py --url ws://127.0.0.1:8080/vta --method mean --params '{"window_size":5}' --save-json
+```
+
+默认读取完整示例 CSV，显示设备 hello 和心跳，保存同结构 CSV；支持 `--repeat` 串行测试。
+以下 Go 验证命令在仓库根目录执行。
 
 ```sh
 make test        # 包含真实 WebSocket、本机临时端口和竞态检测

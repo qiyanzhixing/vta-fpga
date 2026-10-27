@@ -1,0 +1,9 @@
+[project]
+name = "vta-test-client"
+version = "0.1.0"
+description = "VTA 质谱降噪服务的 WebSocket 测试客户端"
+requires-python = ">=3.11"
+dependencies = ["websockets>=15,<18"]
+
+[tool.uv]
+package = false
